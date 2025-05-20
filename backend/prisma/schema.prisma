@@ -1,15 +1,319 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// --- Data Models ---
+
+model User {
+  id            String    @id @default(uuid()) @map("user_id") // Use UUID for IDs
+  email         String    @unique
+  passwordHash  String
+  firstName     String    @map("first_name")
+  lastName      String    @map("last_name")
+  phoneNumber   String?   @map("phone_number") // Optional field
+  avatarUrl     String?   @map("avatar_url")   // Optional field
+  role          Role      @default(OWNER)    // Enum for roles
+  createdAt     DateTime  @default(now())   @map("created_at")
+  updatedAt     DateTime  @updatedAt        @map("updated_at")
+
+  // Relationships
+  pets          Pet[]
+  ownedAppointments Appointment[] @relation("OwnerAppointments") // Appointments booked by this user
+  staffAppointments Appointment[] @relation("StaffAppointments") // Appointments where this user is the staff
+  orders        Order[]
+  activityLogs  ActivityLog[]   @relation("StaffActivityLogs") // Activity logs created by this user (staff)
+  aiConsultations AIConsultation[]
+
+  @@map("users") // Map the model name "User" to table name "users" in the database
+}
+
+// Define the Role Enum
+enum Role {
+  OWNER
+  ADMIN
+  CLINIC_STAFF
+  GROOMER
+}
+
+// Add other models here as we define them...
+
+// Pet Model
+model Pet {
+  id                   String          @id @default(uuid()) @map("pet_id")
+  ownerId              String          @map("owner_id")
+  name                 String
+  species              String
+  breed                String?
+  dateOfBirth          DateTime        @map("date_of_birth") @db.Date // Use Date type for DOB
+  medicalHistory       Json?           @map("medical_history") // Store as JSONB in PostgreSQL
+  vaccinationHistory   Json?           @map("vaccination_history") // Store as JSONB in PostgreSQL
+  avatarUrl            String?         @map("avatar_url")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+
+  // Relationships
+  owner                User            @relation(fields: [ownerId], references: [id])
+  appointments         Appointment[]
+  daycareSlots         DaycareSlot[]
+  activityLogs         ActivityLog[]   @relation("PetActivityLogs") // Activity logs related to this pet
+  aiConsultations      AIConsultation[]
+
+  @@index([ownerId]) // Index ownerId for faster lookups
+  @@map("pets") // Map to 'pets' table
+}
+
+// Service Model (e.g., Vet Consultation, Grooming, Daycare)
+model Service {
+  id              String          @id @default(uuid()) @map("service_id")
+  name            String
+  type            ServiceType     // Enum for service type
+  description     String?
+  durationMinutes Int?            @map("duration_minutes")
+  price           Decimal?        @db.Decimal(10, 2) // Decimal type for currency
+  isActive        Boolean         @default(true) @map("is_active")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  // Relationships
+  appointments    Appointment[]
+
+  @@map("services") // Map to 'services' table
+}
+
+// Define the ServiceType Enum
+enum ServiceType {
+  VET
+  GROOMING
+  DAYCARE
+}
+
+// Appointment Model (for Vet and Grooming)
+model Appointment {
+  id            String          @id @default(uuid()) @map("appointment_id")
+  petId         String          @map("pet_id")
+  serviceId     String          @map("service_id")
+  staffId       String?         @map("staff_id") // Optional: Staff member (Vet or Groomer)
+  ownerId       String          @map("owner_id") // The user who booked the appointment
+  startTime     DateTime        @map("start_time")
+  endTime       DateTime        @map("end_time")
+  status        AppointmentStatus // Enum for status
+  notes         String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Relationships
+  pet           Pet             @relation(fields: [petId], references: [id])
+  service       Service         @relation(fields: [serviceId], references: [id])
+  staff         User?           @relation("StaffAppointments", fields: [staffId], references: [id]) // Link to User as staff
+  owner         User            @relation("OwnerAppointments", fields: [ownerId], references: [id]) // Link to User as owner
+  activityLogs  ActivityLog[]   @relation("AppointmentActivityLogs") // Activity logs related to this appointment
+
+  @@index([petId])
+  @@index([serviceId])
+  @@index([staffId])
+  @@index([ownerId])
+  @@map("appointments") // Map to 'appointments' table
+}
+
+// Define the AppointmentStatus Enum
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED // Added a rescheduled status
+}
+
+// Product Category Model (for E-commerce)
+model ProductCategory {
+  id          String    @id @default(uuid()) @map("category_id")
+  name        String    @unique
+  description String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  products    Product[]
+
+  @@map("product_categories") // Map to 'product_categories' table
+}
+
+// Product Model (for E-commerce)
+model Product {
+  id            String          @id @default(uuid()) @map("product_id")
+  name          String
+  description   String?
+  price         Decimal         @db.Decimal(10, 2) // Decimal type for currency
+  stock         Int
+  imageUrl      String?         @map("image_url")
+  categoryId    String?         @map("category_id") // Optional category
+  isActive      Boolean         @default(true) @map("is_active")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Relationships
+  category      ProductCategory? @relation(fields: [categoryId], references: [id])
+  orderItems    OrderItem[]
+
+  @@index([categoryId])
+  @@map("products") // Map to 'products' table
+}
+
+// Order Model (for E-commerce)
+model Order {
+  id            String          @id @default(uuid()) @map("order_id")
+  ownerId       String          @map("owner_id") // The user who placed the order
+  orderDate     DateTime        @default(now()) @map("order_date")
+  totalAmount   Decimal         @db.Decimal(10, 2) // Decimal type for currency
+  status        OrderStatus     // Enum for order status
+  paymentIntentId String?       @map("payment_intent_id") // Reference for payment gateway (Stripe/Razorpay)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Relationships
+  owner         User            @relation(fields: [ownerId], references: [id])
+  orderItems    OrderItem[]
+
+  @@index([ownerId])
+  @@map("orders") // Map to 'orders' table
+}
+
+// Define the OrderStatus Enum
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED // Added a refunded status
+}
+
+// Order Item Model (line items for an order)
+model OrderItem {
+  id            String    @id @default(uuid()) @map("order_item_id")
+  orderId       String    @map("order_id")
+  productId     String    @map("product_id")
+  quantity      Int
+  priceAtPurchase Decimal @db.Decimal(10, 2) @map("price_at_purchase") // Price when the order was placed
+  createdAt     DateTime  @default(now()) @map("created_at") // Useful for auditing
+  updatedAt     DateTime  @updatedAt @map("updated_at") // Useful for auditing
+
+  // Relationships
+  order         Order     @relation(fields: [orderId], references: [id])
+  product       Product   @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items") // Map to 'order_items' table
+}
+
+// Daycare Slot Model
+model DaycareSlot {
+  id            String          @id @default(uuid()) @map("daycare_slot_id")
+  petId         String          @map("pet_id")
+  date          DateTime        @map("date") @db.Date // Date type for the specific day
+  status        DaycareStatus   // Enum for daycare status
+  roomId        String?         @map("room_id") // Optional room assignment
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Relationships
+  pet           Pet             @relation(fields: [petId], references: [id])
+  room          DaycareRoom?    @relation(fields: [roomId], references: [id]) // Optional relationship
+  activityLogs  ActivityLog[]   @relation("DaycareActivityLogs") // Activity logs related to this slot
+
+  @@index([petId])
+  @@index([roomId])
+  @@map("daycare_slots") // Map to 'daycare_slots' table
+}
+
+// Define the DaycareStatus Enum
+enum DaycareStatus {
+  BOOKED
+  CHECKED_IN // Added check-in status
+  CHECKED_OUT // Added check-out status
+  CANCELLED
+}
+
+// Daycare Room Model (Optional, if capacity is managed per room)
+model DaycareRoom {
+  id        String    @id @default(uuid()) @map("room_id")
+  name      String    @unique
+  capacity  Int
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  daycareSlots DaycareSlot[]
+
+  @@map("daycare_rooms") // Map to 'daycare_rooms' table
+}
+
+
+// Activity Log Model (for Daycare or Appointments)
+model ActivityLog {
+  id              String          @id @default(uuid()) @map("activity_log_id")
+  petId           String          @map("pet_id")
+  staffId         String          @map("staff_id") // The staff member who logged the activity
+  daycareSlotId   String?         @map("daycare_slot_id") // Optional link to a daycare slot
+  appointmentId   String?         @map("appointment_id") // Optional link to an appointment
+  activityType    ActivityType    // Enum for activity type
+  details         String
+  timestamp       DateTime        @default(now()) // When the activity occurred
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  // Relationships
+  pet             Pet             @relation("PetActivityLogs", fields: [petId], references: [id])
+  staff           User            @relation("StaffActivityLogs", fields: [staffId], references: [id]) // Link to User as staff
+  daycareSlot     DaycareSlot?    @relation("DaycareActivityLogs", fields: [daycareSlotId], references: [id]) // Optional link
+  appointment     Appointment?    @relation("AppointmentActivityLogs", fields: [appointmentId], references: [id]) // Optional link
+
+  @@index([petId])
+  @@index([staffId])
+  @@index([daycareSlotId])
+  @@index([appointmentId])
+  @@map("activity_logs") // Map to 'activity_logs' table
+}
+
+// Define the ActivityType Enum
+enum ActivityType {
+  FEEDING
+  WALKING
+  MEDICATION
+  GROOMING
+  VET_CHECK
+  PLAYTIME // Added playtime
+  POTTY_BREAK // Added potty break
+  NOTE
+  OTHER // For anything else
+}
+
+// AI Consultation Log Model
+model AIConsultation {
+  id              String    @id @default(uuid()) @map("consultation_id")
+  petId           String    @map("pet_id")
+  ownerId         String    @map("owner_id") // The user who requested the advice
+  requestTimestamp DateTime @default(now()) @map("request_timestamp") // When the advice was requested
+  petAgeInput     String    @map("pet_age_input") // The age input by the user (string as it might be "2 years" or "5 months")
+  petImageUrl     String?   @map("pet_image_url") // URL to the image uploaded
+  aiResponse      Json      @map("ai_response") // Store the full AI response as JSONB
+  disclaimerDisplayed Boolean @default(false) @map("disclaimer_displayed") // Track if disclaimer was shown
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  pet             Pet       @relation(fields: [petId], references: [id])
+  owner           User      @relation(fields: [ownerId], references: [id])
+
+  @@index([petId])
+  @@index([ownerId])
+  @@map("ai_consultations") // Map to 'ai_consultations' table
 }
