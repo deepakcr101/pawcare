@@ -11,6 +11,9 @@ import { PetsModule } from './pets/pets.module';
 import { AppointmentsModule } from './appointments/appointments.module'; // <-- Only ONE of these!
 import { ServicesModule } from './services/services.module';
 import { StaffModule } from './staff/staff.module';
+import { DaycareSlotsModule } from './daycare-slots/daycare-slots.module';
+import { DaycareBookingsModule } from './daycare-bookings/daycare-bookings.module';
+import { ActivityLogsModule } from './activity-logs/activity-logs.module';
 
 @Module({
   imports: [
@@ -23,7 +26,7 @@ import { StaffModule } from './staff/staff.module';
     // UsersModule, 
     PetsModule,
     AppointmentsModule, // <-- Only ONE of these in the array!
-    ServicesModule, StaffModule,
+    ServicesModule, StaffModule, DaycareSlotsModule, DaycareBookingsModule, ActivityLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

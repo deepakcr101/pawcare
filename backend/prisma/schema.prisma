@@ -83,7 +83,7 @@ enum AppointmentStatus {
 
 // Your existing Pet model (ensure it connects to User)
 model Pet {
-  id               String        @id @default(uuid())
+  id               String        @id @default(uuid()) @map("pet_id")
   name             String
   species          String
   breed            String?
@@ -95,7 +95,8 @@ model Pet {
   owner            User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   appointments     Appointment[] // Appointments associated with this pet
   activityLogs     ActivityLog[] @relation("PetActivityLogs") // Activity logs related to this pet
-  daycareSlots     DaycareSlot[] @relation("PetDaycareSlots") // <--- ADD THIS LINE
+  daycareBookings DaycareBooking[] @relation("PetDaycareBookings") 
+  
   aiConsultations  AIConsultation[] @relation("PetAIConsultations") 
 
   createdAt        DateTime      @default(now())
@@ -139,33 +140,6 @@ model Appointment {
   // @@unique([appointmentDate, appointmentTime, staffId])
   @@map("appointments")
 }
-
-
-model ActivityLog {
-  id              String        @id @default(uuid()) @map("activity_log_id")
-  petId           String        @map("pet_id")
-  staffId         String        @map("staff_id") // The staff member who logged the activity
-  daycareSlotId   String?       @map("daycare_slot_id") // Optional link to a daycare slot
-  appointmentId   String?       @map("appointment_id") // Optional link to an appointment
-  activityType    ActivityType
-  details         String
-  timestamp       DateTime      @default(now()) // When the activity occurred
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-
-  // Relationships
-  pet             Pet           @relation("PetActivityLogs", fields: [petId], references: [id]) // Back-relation in Pet model
-  staff           User          @relation("StaffActivityLogs", fields: [staffId], references: [id]) // Back-relation in User model
-  daycareSlot     DaycareSlot?  @relation("DaycareActivityLogs", fields: [daycareSlotId], references: [id]) // Assuming DaycareSlot
-  appointment     Appointment?  @relation("AppointmentActivityLogs", fields: [appointmentId], references: [id]) // Back-relation in Appointment model
-
-  @@index([petId])
-  @@index([staffId])
-  @@index([daycareSlotId])
-  @@index([appointmentId])
-  @@map("activity_logs")
-}
-
 
 // Product Category Model (for E-commerce)
 model ProductCategory {
@@ -250,60 +224,119 @@ model OrderItem {
   @@map("order_items") // Map to 'order_items' table
 }
 
-// Daycare Slot Model
-model DaycareSlot {
-  id            String          @id @default(uuid()) @map("daycare_slot_id")
-  petId         String          @map("pet_id")
-  date          DateTime        @map("date") @db.Date // Date type for the specific day
-  status        DaycareStatus   // Enum for daycare status
-  roomId        String?         @map("room_id") // Optional room assignment
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
-
-  // Relationships
-  pet           Pet             @relation("PetDaycareSlots",fields: [petId], references: [id])
-  room          DaycareRoom?    @relation(fields: [roomId], references: [id]) // Optional relationship
-  activityLogs  ActivityLog[]   @relation("DaycareActivityLogs") // Activity logs related to this slot
-
-  @@index([petId])
-  @@index([roomId])
-  @@map("daycare_slots") // Map to 'daycare_slots' table
-}
-
-// Define the DaycareStatus Enum
-enum DaycareStatus {
+/// --- ENUMS ---
+enum DaycareBookingStatus { // Status for a single pet's daycare booking
   BOOKED
-  CHECKED_IN // Added check-in status
-  CHECKED_OUT // Added check-out status
+  CHECKED_IN
+  CHECKED_OUT
   CANCELLED
 }
 
-// Daycare Room Model (Optional, if capacity is managed per room)
-model DaycareRoom {
-  id        String    @id @default(uuid()) @map("room_id")
-  name      String    @unique
-  capacity  Int
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-
-  // Relationships
-  daycareSlots DaycareSlot[]
-
-  @@map("daycare_rooms") // Map to 'daycare_rooms' table
+enum DaycareSessionStatus { // Status for the overall daily daycare session
+  AVAILABLE
+  FULL
+  CLOSED
 }
 
-
-// Define the ActivityType Enum
 enum ActivityType {
   FEEDING
   WALKING
   MEDICATION
   GROOMING
   VET_CHECK
-  PLAYTIME // Added playtime
-  POTTY_BREAK // Added potty break
+  PLAYTIME
+  POTTY_BREAK
   NOTE
-  OTHER // For anything else
+  OTHER
+}
+
+// --- MODELS ---
+
+// New Model: Represents the overall availability for a specific date (e.g., "July 1st: 10 spots")
+model DaycareSession {
+  id              String               @id @default(uuid()) @map("daycare_session_id")
+  date            DateTime             @unique @db.Date // Ensures only one session per day
+  totalCapacity   Int                  // Total number of spots available for this day
+  currentBookings Int                  @default(0) // Counter for how many pets are currently booked into this session
+  price           Decimal              // Price for this session per pet
+  status          DaycareSessionStatus @default(AVAILABLE) // Overall status (AVAILABLE, FULL, CLOSED)
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  // A DaycareSession can have many DaycareBookings
+  daycareBookings DaycareBooking[]
+
+  @@map("daycare_sessions")
+}
+
+
+// Renamed from DaycareSlot to DaycareBooking: Represents a single pet's booking into a DaycareSession
+model DaycareBooking {
+  id               String                 @id @default(uuid()) @map("daycare_booking_id")
+  petId            String                 @map("pet_id")
+  status           DaycareBookingStatus   // Status specific to this booking (BOOKED, CHECKED_IN, etc.)
+  roomId           String?                @map("room_id") // Optional room assignment for this specific booking
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  // Foreign key to the new DaycareSession model
+  daycareSessionId String                 @map("daycare_session_id")
+
+  // Relationships
+  pet              Pet                    @relation("PetDaycareBookings", fields: [petId], references: [id])
+  room             DaycareRoom?           @relation(fields: [roomId], references: [id])
+  daycareSession   DaycareSession         @relation(fields: [daycareSessionId], references: [id])
+  activityLogs     ActivityLog[]          @relation("DaycareActivityLogs") // Link to ActivityLog
+
+  @@index([petId])
+  @@index([roomId])
+  @@index([daycareSessionId]) // Index for efficient lookups by session
+  @@map("daycare_bookings")
+}
+
+
+// Daycare Room Model (Unchanged - looks good!)
+model DaycareRoom {
+  id           String         @id @default(uuid()) @map("room_id")
+  name         String         @unique
+  capacity     Int
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  // Relationships
+  daycareSlots DaycareBooking[] // Changed from DaycareSlot to DaycareBooking
+  // Consider if capacity here is "per day" or "per active pet" etc.
+  // We'll manage overall DaycareSession capacity and let DaycareRoom capacity be an additional constraint if needed.
+
+  @@map("daycare_rooms")
+}
+
+
+// Your EXISTING ActivityLog model, adapted for DaycareBooking
+model ActivityLog {
+  id               String       @id @default(uuid()) @map("activity_log_id")
+  petId            String       @map("pet_id")
+  staffId          String       @map("staff_id") // The staff member who logged the activity
+  daycareBookingId String?      @map("daycare_booking_id") // Updated to link to DaycareBooking
+  appointmentId    String?      @map("appointment_id") // Optional link to an appointment
+  activityType     ActivityType
+  details          String // This important field was missing from my previous version
+  timestamp        DateTime     @default(now()) // When the activity occurred
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  // Relationships
+  pet              Pet?         @relation("PetActivityLogs", fields: [petId], references: [id])
+  staff            User         @relation("StaffActivityLogs", fields: [staffId], references: [id])
+  // Updated relation name and type to match the new DaycareBooking model
+  daycareBooking   DaycareBooking? @relation("DaycareActivityLogs", fields: [daycareBookingId], references: [id])
+  appointment      Appointment? @relation("AppointmentActivityLogs", fields: [appointmentId], references: [id])
+
+  @@index([petId])
+  @@index([staffId])
+  @@index([daycareBookingId]) // Make sure this index is updated
+  @@index([appointmentId])
+  @@map("activity_logs")
 }
 
 // AI Consultation Log Model

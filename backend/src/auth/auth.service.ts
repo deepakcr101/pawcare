@@ -6,6 +6,7 @@ import * as bcrypt from 'bcrypt';
 import { User } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt'; // Import JwtService
 import { ConfigService } from '@nestjs/config';
+import { Role } from '@prisma/client'; 
 
 @Injectable()
 export class AuthService {
@@ -16,47 +17,48 @@ export class AuthService {
   ) {}
 
 
-  async register(registerUserDto: RegisterUserDto): Promise<User> {
-    const { email, password, firstName, lastName, phone } = registerUserDto;
-
-    // Check if user already exists
+  async register(dto: RegisterUserDto) {
     const existingUser = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: dto.email },
     });
 
     if (existingUser) {
-      throw new ConflictException('Email already exists');
+      throw new ConflictException('User with this email already exists.');
     }
 
-    try {
-      // Hash the password
-      const saltOrRounds = 10;
-      const passwordHash = await bcrypt.hash(password, saltOrRounds);
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-      // Create the user in the database
-      const user = await this.prisma.user.create({
-        data: {
-          email,
-          passwordHash,
-          firstName,
-          lastName,
-          phone,
-          role: 'OWNER', // Default role for new registrations
-        },
-      });
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        passwordHash: hashedPassword,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        role: Role.OWNER, // <-- FIX: Assign 'OWNER' role here on the backend
+        // Add any other default fields here
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+      },
+    });
 
-      // In a real app, you might remove the passwordHash before returning the user object
-      // delete user.passwordHash; // Not possible directly on Prisma result, needs transformation
-
-      return user;
-
-    } catch (error) {
-      // Handle potential database errors
-      console.error('Registration error:', error); // Log the error for debugging
-      throw new InternalServerErrorException('Failed to register user');
-    }
+    // Automatically log in the user after registration (optional, but common UX)
+    const payload = { sub: user.id, email: user.email, role: user.role };
+    return {
+      accessToken: await this.jwtService.signAsync(payload),
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+      },
+    };
   }
-
   // We'll add login logic here next
   async login(loginUserDto: LoginUserDto): Promise<{ accessToken: string }> {
     const { email, password } = loginUserDto;
