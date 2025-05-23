@@ -16,5 +16,5 @@ export class RegisterUserDto {
 
   @IsString({ message: 'Phone number must be a string' })
   @IsOptional() // Phone number is optional based on schema
-  phoneNumber?: string;
+  phone?: string;
 }

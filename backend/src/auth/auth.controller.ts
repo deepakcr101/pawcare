@@ -1,24 +1,48 @@
-import { Body, Controller, Post, ValidationPipe, HttpCode, HttpStatus } from '@nestjs/common'; // Import HttpCode, HttpStatus
+import {
+  Controller, Post, Body, Get, Request,
+  UseGuards, HttpCode, HttpStatus, ValidationPipe
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterUserDto } from './dto/register-user.dto';
-import { LoginUserDto } from './dto/login-user.dto'; // Import LoginUserDto
-import { User } from '@prisma/client';
+import { LoginUserDto } from './dto/login-user.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './decorators/roles.decorator';
+import { Role } from '@prisma/client';
 
-@Controller('auth') // Base route for authentication endpoints
+@Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {} // Inject AuthService
+  constructor(private authService: AuthService) {}
 
-  @Post('/register') // Defines a POST endpoint at /auth/register
-  async register(@Body(ValidationPipe) registerUserDto: RegisterUserDto): Promise<User> {
-    return this.authService.register(registerUserDto);
+  @Post('register')
+  async register(@Body(ValidationPipe) dto: RegisterUserDto) {
+    return this.authService.register(dto);
   }
 
-  // We'll add login endpoint here next
-  @Post('/login') // Defines a POST endpoint at /auth/login
-  @HttpCode(HttpStatus.OK) // Return 200 OK on success instead of default 201
-  async login(@Body(ValidationPipe) loginUserDto: LoginUserDto): Promise<{ accessToken: string }> {
-    return this.authService.login(loginUserDto);
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  async login(@Body(ValidationPipe) dto: LoginUserDto) {
+    return this.authService.login(dto);
   }
-  // @Post('/login')
-  // async login(@Body(ValidationPipe) loginUserDto: LoginUserDto): Promise<{ accessToken: string }> { ... }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('profile')
+  getProfile(@Request() req) {
+    return req.user;
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('admin-dashboard')
+  getAdminDashboard(@Request() req) {
+    return { message: 'Welcome Admin!', user: req.user };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.CLINIC_STAFF, Role.ADMIN)
+  @Get('staff-portal')
+  getStaffPortal(@Request() req) {
+    return { message: 'Welcome Staff!', user: req.user };
+  }
 }
+

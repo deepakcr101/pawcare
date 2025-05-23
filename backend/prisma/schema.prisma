@@ -18,7 +18,8 @@ model User {
   passwordHash  String
   firstName     String    @map("first_name")
   lastName      String    @map("last_name")
-  phoneNumber   String?   @map("phone_number") // Optional field
+  phone                String?   @map("phoneNumber")
+  address              String?
   avatarUrl     String?   @map("avatar_url")   // Optional field
   role          Role      @default(OWNER)    // Enum for roles
   createdAt     DateTime  @default(now())   @map("created_at")
@@ -29,7 +30,7 @@ model User {
   ownedAppointments Appointment[] @relation("OwnerAppointments") // Appointments booked by this user
   staffAppointments Appointment[] @relation("StaffAppointments") // Appointments where this user is the staff
   orders        Order[]
-  activityLogs  ActivityLog[]   @relation("StaffActivityLogs") // Activity logs created by this user (staff)
+  activityLogs        ActivityLog[] @relation("StaffActivityLogs") // Activity logs created by this user (staff)
   aiConsultations AIConsultation[]
 
   @@map("users") // Map the model name "User" to table name "users" in the database
@@ -45,91 +46,126 @@ enum Role {
 
 // Add other models here as we define them...
 
-// Pet Model
-model Pet {
-  id                   String          @id @default(uuid()) @map("pet_id")
-  ownerId              String          @map("owner_id")
-  name                 String
-  species              String
-  breed                String?
-  dateOfBirth          DateTime        @map("date_of_birth") @db.Date // Use Date type for DOB
-  medicalHistory       Json?           @map("medical_history") // Store as JSONB in PostgreSQL
-  vaccinationHistory   Json?           @map("vaccination_history") // Store as JSONB in PostgreSQL
-  avatarUrl            String?         @map("avatar_url")
-  createdAt            DateTime        @default(now()) @map("created_at")
-  updatedAt            DateTime        @updatedAt @map("updated_at")
-
-  // Relationships
-  owner                User            @relation(fields: [ownerId], references: [id])
-  appointments         Appointment[]
-  daycareSlots         DaycareSlot[]
-  activityLogs         ActivityLog[]   @relation("PetActivityLogs") // Activity logs related to this pet
-  aiConsultations      AIConsultation[]
-
-  @@index([ownerId]) // Index ownerId for faster lookups
-  @@map("pets") // Map to 'pets' table
-}
-
-// Service Model (e.g., Vet Consultation, Grooming, Daycare)
-model Service {
-  id              String          @id @default(uuid()) @map("service_id")
-  name            String
-  type            ServiceType     // Enum for service type
-  description     String?
-  durationMinutes Int?            @map("duration_minutes")
-  price           Decimal?        @db.Decimal(10, 2) // Decimal type for currency
-  isActive        Boolean         @default(true) @map("is_active")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-
-  // Relationships
-  appointments    Appointment[]
-
-  @@map("services") // Map to 'services' table
-}
-
-// Define the ServiceType Enum
+// Service Model (e.g., Vet Consultation, Grooming, Daycare
 enum ServiceType {
-  VET
+  VETERINARY
   GROOMING
   DAYCARE
+  // Add other service types as needed
 }
+// Your existing Service model (ensure it has @unique on name and the correct references)
+model Service {
+  id              String         @id @default(uuid()) @map("service_id")
+  name            String         @unique // Ensure this is @unique
+  type            ServiceType?   // Optional: if all services don't need a type, otherwise remove ?
+  description     String?
+  durationMinutes Int?           @map("duration_minutes") // Adjust nullability as per your need
+  price           Decimal?       @db.Decimal(10, 2) // Adjust nullability as per your need
+  isActive        Boolean        @default(true) @map("is_active")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
-// Appointment Model (for Vet and Grooming)
-model Appointment {
-  id            String          @id @default(uuid()) @map("appointment_id")
-  petId         String          @map("pet_id")
-  serviceId     String          @map("service_id")
-  staffId       String?         @map("staff_id") // Optional: Staff member (Vet or Groomer)
-  ownerId       String          @map("owner_id") // The user who booked the appointment
-  startTime     DateTime        @map("start_time")
-  endTime       DateTime        @map("end_time")
-  status        AppointmentStatus // Enum for status
-  notes         String?
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
+  appointments    Appointment[] // Appointments related to this service
 
-  // Relationships
-  pet           Pet             @relation(fields: [petId], references: [id])
-  service       Service         @relation(fields: [serviceId], references: [id])
-  staff         User?           @relation("StaffAppointments", fields: [staffId], references: [id]) // Link to User as staff
-  owner         User            @relation("OwnerAppointments", fields: [ownerId], references: [id]) // Link to User as owner
-  activityLogs  ActivityLog[]   @relation("AppointmentActivityLogs") // Activity logs related to this appointment
-
-  @@index([petId])
-  @@index([serviceId])
-  @@index([staffId])
-  @@index([ownerId])
-  @@map("appointments") // Map to 'appointments' table
+  @@map("services")
 }
 
 // Define the AppointmentStatus Enum
 enum AppointmentStatus {
   SCHEDULED
+  CONFIRMED // <--- Added
   COMPLETED
   CANCELLED
-  RESCHEDULED // Added a rescheduled status
+  RESCHEDULED // <--- Keep this one!
+  NO_SHOW   // <--- Added
 }
+
+
+// Your existing Pet model (ensure it connects to User)
+model Pet {
+  id               String        @id @default(uuid())
+  name             String
+  species          String
+  breed            String?
+  dateOfBirth      DateTime
+  medicalHistory   Json?
+  vaccinationHistory Json?
+  avatarUrl        String?
+  ownerId          String // Foreign key to User
+  owner            User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  appointments     Appointment[] // Appointments associated with this pet
+  activityLogs     ActivityLog[] @relation("PetActivityLogs") // Activity logs related to this pet
+  daycareSlots     DaycareSlot[] @relation("PetDaycareSlots") // <--- ADD THIS LINE
+  aiConsultations  AIConsultation[] @relation("PetAIConsultations") 
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@map("pets")
+}
+
+
+model Appointment {
+  id              String            @id @default(uuid())
+  appointmentDate DateTime          @db.Date
+  appointmentTime DateTime          @db.Time(0)
+  status          AppointmentStatus @default(SCHEDULED)
+  notes           String?
+
+  // Relation to the User (owner) who booked it
+  ownerId         String
+  owner           User              @relation("OwnerAppointments", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Relation to the Pet attending
+  petId           String
+  pet             Pet               @relation(fields: [petId], references: [id], onDelete: Cascade)
+
+  // Relation to the Service being booked
+  serviceId       String
+  service         Service           @relation(fields: [serviceId], references: [id]) // Corrected: references to Service.id
+
+  // Optional relation to the User (staff) assigned to it
+  staffId         String? // Nullable if staff assignment is optional
+  staff           User?             @relation("StaffAppointments", fields: [staffId], references: [id]) // Use staffAppointments relation name
+
+  // Back-relation from ActivityLog
+  activityLogs    ActivityLog[]     @relation("AppointmentActivityLogs") // <--- ADDED THIS LINE to Appointment model
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([appointmentDate, appointmentTime, serviceId]) // One service slot per date/time
+  // If a staff member can only do one appointment at a time, add:
+  // @@unique([appointmentDate, appointmentTime, staffId])
+  @@map("appointments")
+}
+
+
+model ActivityLog {
+  id              String        @id @default(uuid()) @map("activity_log_id")
+  petId           String        @map("pet_id")
+  staffId         String        @map("staff_id") // The staff member who logged the activity
+  daycareSlotId   String?       @map("daycare_slot_id") // Optional link to a daycare slot
+  appointmentId   String?       @map("appointment_id") // Optional link to an appointment
+  activityType    ActivityType
+  details         String
+  timestamp       DateTime      @default(now()) // When the activity occurred
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relationships
+  pet             Pet           @relation("PetActivityLogs", fields: [petId], references: [id]) // Back-relation in Pet model
+  staff           User          @relation("StaffActivityLogs", fields: [staffId], references: [id]) // Back-relation in User model
+  daycareSlot     DaycareSlot?  @relation("DaycareActivityLogs", fields: [daycareSlotId], references: [id]) // Assuming DaycareSlot
+  appointment     Appointment?  @relation("AppointmentActivityLogs", fields: [appointmentId], references: [id]) // Back-relation in Appointment model
+
+  @@index([petId])
+  @@index([staffId])
+  @@index([daycareSlotId])
+  @@index([appointmentId])
+  @@map("activity_logs")
+}
+
 
 // Product Category Model (for E-commerce)
 model ProductCategory {
@@ -225,7 +261,7 @@ model DaycareSlot {
   updatedAt     DateTime        @updatedAt @map("updated_at")
 
   // Relationships
-  pet           Pet             @relation(fields: [petId], references: [id])
+  pet           Pet             @relation("PetDaycareSlots",fields: [petId], references: [id])
   room          DaycareRoom?    @relation(fields: [roomId], references: [id]) // Optional relationship
   activityLogs  ActivityLog[]   @relation("DaycareActivityLogs") // Activity logs related to this slot
 
@@ -257,32 +293,6 @@ model DaycareRoom {
 }
 
 
-// Activity Log Model (for Daycare or Appointments)
-model ActivityLog {
-  id              String          @id @default(uuid()) @map("activity_log_id")
-  petId           String          @map("pet_id")
-  staffId         String          @map("staff_id") // The staff member who logged the activity
-  daycareSlotId   String?         @map("daycare_slot_id") // Optional link to a daycare slot
-  appointmentId   String?         @map("appointment_id") // Optional link to an appointment
-  activityType    ActivityType    // Enum for activity type
-  details         String
-  timestamp       DateTime        @default(now()) // When the activity occurred
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-
-  // Relationships
-  pet             Pet             @relation("PetActivityLogs", fields: [petId], references: [id])
-  staff           User            @relation("StaffActivityLogs", fields: [staffId], references: [id]) // Link to User as staff
-  daycareSlot     DaycareSlot?    @relation("DaycareActivityLogs", fields: [daycareSlotId], references: [id]) // Optional link
-  appointment     Appointment?    @relation("AppointmentActivityLogs", fields: [appointmentId], references: [id]) // Optional link
-
-  @@index([petId])
-  @@index([staffId])
-  @@index([daycareSlotId])
-  @@index([appointmentId])
-  @@map("activity_logs") // Map to 'activity_logs' table
-}
-
 // Define the ActivityType Enum
 enum ActivityType {
   FEEDING
@@ -310,7 +320,7 @@ model AIConsultation {
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   // Relationships
-  pet             Pet       @relation(fields: [petId], references: [id])
+  pet             Pet       @relation("PetAIConsultations",fields: [petId], references: [id])
   owner           User      @relation(fields: [ownerId], references: [id])
 
   @@index([petId])

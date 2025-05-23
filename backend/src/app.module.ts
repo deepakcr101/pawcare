@@ -1,21 +1,29 @@
+// backend/src/app.module.ts
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config'; // Import ConfigModule
+import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { PrismaService } from './prisma/prisma.service'; // Import PrismaService
-// import { AuthModule } from './auth/auth.module'; // We will create this next
+//import { PrismaService } from './prisma/prisma.service';
+import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { PetsModule } from './pets/pets.module';
+import { AppointmentsModule } from './appointments/appointments.module'; // <-- Only ONE of these!
+import { ServicesModule } from './services/services.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ // Configure ConfigModule
-      isGlobal: true, // Makes ConfigModule available globally
-      envFilePath: '../.env', // Specify the path to your .env file
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '../.env',
     }),
+    PrismaModule,
     AuthModule,
+    PetsModule,
+    AppointmentsModule, // <-- Only ONE of these in the array!
+    ServicesModule,
   ],
   controllers: [AppController],
-  providers: [AppService, PrismaService], // Provide PrismaService
-  exports: [PrismaService], // Export PrismaService to make it available outside this module (though global makes it widely available)
+  providers: [AppService],
+  exports: [],
 })
 export class AppModule {}
