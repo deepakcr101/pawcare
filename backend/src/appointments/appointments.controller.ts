@@ -21,34 +21,36 @@ import { RolesGuard } from '../auth/guards/roles.guard'; // Import RolesGuard fo
 import { Roles } from '../auth/decorators/roles.decorator'; // Import Roles decorator
 import { Role } from '@prisma/client'; // Import Role enum
 import { Appointment } from '@prisma/client';
+import { FindSlotsDto } from './dto/find-slots.dto'; // Import the new DTO
+import { Query } from '@nestjs/common'; 
+
 
 @Controller('appointments')
-@UseGuards(JwtAuthGuard) // Apply JwtAuthGuard to all methods in this controller
+@UseGuards(JwtAuthGuard)
 export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  // JwtAuthGuard is applied at controller level, so no need here
-  async create(
-    @Request() req,
-    @Body(ValidationPipe) createAppointmentDto: CreateAppointmentDto,
-  ): Promise<Appointment> {
-    const userId = req.user.id;
-    return this.appointmentsService.create(userId, createAppointmentDto);
+  async create(@Request() req, @Body(ValidationPipe) createAppointmentDto: CreateAppointmentDto): Promise<Appointment> {
+    const bookingUserId = req.user.userId;
+    return this.appointmentsService.create(bookingUserId, createAppointmentDto);
   }
 
   @Get()
-  // Uses RolesGuard for fine-grained access based on role (ADMIN/STAFF can see all, USER only their own)
-  @UseGuards(RolesGuard) // Apply RolesGuard for findAll
+  @UseGuards(RolesGuard)
   async findAll(@Request() req): Promise<Appointment[]> {
     const userId = req.user.id;
-    const userRole: Role = req.user.role; // Assuming role is available in req.user
+    const userRole: Role = req.user.role;
     return this.appointmentsService.findAll(userId, userRole);
   }
 
+  @Get('available-slots')  // <-- move this up
+  async getAvailableSlots(@Query(ValidationPipe) findSlotsDto: FindSlotsDto): Promise<any[]> {
+    return this.appointmentsService.findAvailableSlots(findSlotsDto);
+  }
+
   @Get(':id')
-  // No additional RolesGuard needed here; logic is in service
   async findOne(@Param('id') id: string, @Request() req): Promise<Appointment> {
     const userId = req.user.id;
     const userRole: Role = req.user.role;
@@ -56,20 +58,14 @@ export class AppointmentsController {
   }
 
   @Patch(':id')
-  // No additional RolesGuard needed here; logic is in service
-  async update(
-    @Param('id') id: string,
-    @Request() req,
-    @Body(ValidationPipe) updateAppointmentDto: UpdateAppointmentDto,
-  ): Promise<Appointment> {
+  async update(@Param('id') id: string, @Request() req, @Body(ValidationPipe) updateAppointmentDto: UpdateAppointmentDto): Promise<Appointment> {
     const userId = req.user.id;
     const userRole: Role = req.user.role;
     return this.appointmentsService.update(id, userId, userRole, updateAppointmentDto);
   }
 
   @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT) // 204 No Content for successful cancellation/deletion
-  // No additional RolesGuard needed here; logic is in service
+  @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string, @Request() req): Promise<void> {
     const userId = req.user.id;
     const userRole: Role = req.user.role;

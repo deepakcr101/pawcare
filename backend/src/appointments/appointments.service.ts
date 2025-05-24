@@ -7,106 +7,129 @@ import {
   ConflictException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { UpdateAppointmentDto } from './dto/update-appointment.dto'; 
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
-import { Appointment, Role } from '@prisma/client'; // Import Appointment and Role types
+import { UpdateAppointmentDto } from './dto/update-appointment.dto';
+import { Appointment, Role, User as PrismaUser, Service, Prisma } from '@prisma/client'; // Added Service here
 
 @Injectable()
 export class AppointmentsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(userId: string, createAppointmentDto: CreateAppointmentDto): Promise<Appointment> {
-    const { petId, serviceId, appointmentDate, appointmentTime, notes } = createAppointmentDto;
+  async create(bookingUserId: string, createAppointmentDto: CreateAppointmentDto): Promise<Appointment> {
+    const { petId, serviceId, dateTime, staffId, notes } = createAppointmentDto;
+
+    const appointmentDateTime = new Date(dateTime);
+
+    if (isNaN(appointmentDateTime.getTime())) {
+      throw new BadRequestException('Invalid dateTime format. Please use ISO8601 format (YYYY-MM-DDTHH:mm:ss.sssZ).');
+    }
 
     try {
-      // 1. Verify Pet exists and belongs to the booking user (userId)
-      const pet = await this.prisma.pet.findUnique({
-        where: { id: petId },
-      });
-
-      if (!pet) {
-        throw new NotFoundException(`Pet with ID "${petId}" not found.`);
-      }
-      if (pet.ownerId !== userId) {
+      const pet = await this.prisma.pet.findUnique({ where: { id: petId } });
+      if (!pet) throw new NotFoundException(`Pet with ID "${petId}" not found.`);
+      if (pet.ownerId !== bookingUserId) {
         throw new ForbiddenException(`Pet with ID "${petId}" does not belong to the authenticated user.`);
       }
 
-      // 2. Verify Service exists
-      const service = await this.prisma.service.findUnique({
-        where: { id: serviceId },
-      });
-
-      if (!service) {
-        throw new NotFoundException(`Service with ID "${serviceId}" not found.`);
+      const service = await this.prisma.service.findUnique({ where: { id: serviceId } });
+      if (!service || !service.isActive) {
+        throw new NotFoundException(`Active service with ID "${serviceId}" not found.`);
+      }
+      if (service.durationMinutes === null || service.durationMinutes === undefined) { // Check for null or undefined
+        throw new BadRequestException(`Service with ID "${serviceId}" does not have a duration configured.`);
       }
 
-      // 3. Convert date and time strings to correct formats for Prisma
-      // Prisma's Date type expects a full ISO string (Date object) for `DateTime` fields.
-      // For `@db.Date` and `@db.Time(0)`, you can pass Date objects, and Prisma will extract parts.
-      const fullAppointmentDateTime = new Date(`${appointmentDate}T${appointmentTime}:00Z`);
+      const staffMember = await this.prisma.user.findUnique({ where: { id: staffId } });
+      if (!staffMember || (staffMember.role !== Role.CLINIC_STAFF && staffMember.role !== Role.GROOMER)) {
+        throw new NotFoundException(`Staff member with ID "${staffId}" not found or is not valid staff.`);
+      }
 
-    // 4. Check for double booking (based on the @@unique constraint: [appointmentDate, appointmentTime, serviceId])
-    // The error indicates Prisma expects a specific combined unique input type.
-    const existingAppointment = await this.prisma.appointment.findUnique({
-      where: {
-        appointmentDate_appointmentTime_serviceId: { // <--- CHANGE IS HERE!
-          appointmentDate: fullAppointmentDateTime,
-          appointmentTime: fullAppointmentDateTime,
-          serviceId: serviceId,
+      const staffCanPerformService = await this.prisma.staffService.findUnique({
+        where: { staffId_serviceId: { staffId, serviceId } },
+      });
+      if (!staffCanPerformService) {
+        throw new BadRequestException(`Staff member "${staffMember.firstName}" is not qualified for service "${service.name}".`);
+      }
+
+      const appointmentEndTime = new Date(appointmentDateTime.getTime() + service.durationMinutes * 60000);
+
+      const availableSlot = await this.prisma.staffAvailability.findFirst({
+        where: {
+          staffId,
+          startTime: { lte: appointmentDateTime },
+          endTime: { gte: appointmentEndTime },
         },
-      },
-    });
+      });
+      if (!availableSlot) {
+        throw new ConflictException(`Staff member "${staffMember.firstName}" is not available at the requested time for this service duration.`);
+      }
 
-    if (existingAppointment) {
-      throw new ConflictException('This service slot is already booked. Please choose a different time or service.');
-    }
+      // Prisma will check the @@unique([dateTime, staffId], name: "unique_staff_time_slot") constraint upon creation.
+      // An explicit check for overlapping appointments can be added here for better UX before Prisma throws P2002.
+      // For example:
+      const conflictingAppointments = await this.prisma.appointment.findMany({
+        where: {
+          staffId: staffId,
+          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+          // Check if existing appointment overlaps with the new one's time range
+          // (existing.startTime < new.endTime) AND (existing.endTime > new.startTime)
+          // This requires knowing the duration of existing appointments
+          // For simplicity, we'll rely on the unique constraint primarily for exact start time + staff,
+          // but a full overlap check is more robust.
+          // This simplified check looks for appointments that start during the proposed slot.
+          dateTime: {
+            lt: appointmentEndTime, // Existing appointment starts before new one ends
+            gte: appointmentDateTime, // Existing appointment starts at or after new one starts
+          },
+        },
+      });
 
-      // 5. Create the appointment
+      if (conflictingAppointments.length > 0) {
+         // A more granular check considering durations of these conflicting appointments is needed.
+         // For now, if any appointment starts within this proposed window for this staff, flag it.
+         throw new ConflictException('The selected staff member has a conflicting appointment during this time.');
+      }
+
+
       return this.prisma.appointment.create({
         data: {
-          ownerId: userId,
-          petId: pet.id,
-          serviceId: service.id,
-          appointmentDate: fullAppointmentDateTime,
-          appointmentTime: fullAppointmentDateTime, // Prisma will extract the time part due to @db.Time(0)
+          ownerId: bookingUserId,
+          petId,
+          serviceId,
+          staffId,
+          dateTime: appointmentDateTime,
           notes,
-          status: 'SCHEDULED', // Default status
+          status: 'SCHEDULED',
         },
       });
     } catch (error) {
-      // Handle specific errors thrown by our checks or Prisma errors
-      if (error instanceof NotFoundException ||
-          error instanceof ForbiddenException ||
-          error instanceof ConflictException ||
-          error instanceof BadRequestException) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException ||
+          error instanceof ConflictException || error instanceof BadRequestException) {
         throw error;
       }
-      // Handle Prisma unique constraint error (P2002) if not caught by explicit check above
-      if (error.code === 'P2002' && error.meta?.target?.includes('appointmentDate') && error.meta?.target?.includes('appointmentTime') && error.meta?.target?.includes('serviceId')) {
-          throw new ConflictException('This service slot is already booked. Please choose a different time or service.');
+      if (error.code === 'P2002' && error.meta?.target?.includes('unique_staff_time_slot')) {
+        throw new ConflictException('This time slot with the selected staff is already booked (unique constraint).');
       }
       console.error('Error creating appointment:', error);
       throw new InternalServerErrorException('Failed to create appointment.');
     }
   }
 
-  // --- New Methods Below ---
-
   async findAll(userId: string, userRole: Role): Promise<Appointment[]> {
     try {
       const whereClause = userRole === Role.ADMIN || userRole === Role.CLINIC_STAFF || userRole === Role.GROOMER
-      ? {} // Admins/Clinic Staff/Groomers can see all appointments
-      : { ownerId: userId }; // Regular users (Owners) only see their own
+        ? {}
+        : { ownerId: userId };
       return this.prisma.appointment.findMany({
         where: whereClause,
-        include: { // Include related data for richer response
+        include: {
           owner: { select: { id: true, firstName: true, lastName: true, email: true } },
           pet: { select: { id: true, name: true, species: true } },
-          service: { select: { id: true, name: true, price: true, type: true } },
-          staff: { select: { id: true, firstName: true, lastName: true } }, // Include staff if assigned
+          service: { select: { id: true, name: true, price: true, type: true, durationMinutes: true } },
+          staff: { select: { id: true, firstName: true, lastName: true } },
         },
-        orderBy: { appointmentDate: 'asc' }, // Order by date ascending
+        orderBy: { dateTime: 'asc' }, // CORRECTED: Was appointmentDate
       });
     } catch (error) {
       console.error('Error fetching appointments:', error);
@@ -121,7 +144,7 @@ export class AppointmentsService {
         include: {
           owner: { select: { id: true, firstName: true, lastName: true, email: true } },
           pet: { select: { id: true, name: true, species: true } },
-          service: { select: { id: true, name: true, price: true, type: true } },
+          service: { select: { id: true, name: true, price: true, type: true, durationMinutes: true } },
           staff: { select: { id: true, firstName: true, lastName: true } },
         },
       });
@@ -130,11 +153,9 @@ export class AppointmentsService {
         throw new NotFoundException(`Appointment with ID "${appointmentId}" not found.`);
       }
 
-      // Authorization check: Only owner, admin, or assigned staff can view
       if (appointment.ownerId !== userId && userRole !== Role.ADMIN && appointment.staffId !== userId) {
         throw new ForbiddenException('You do not have permission to view this appointment.');
       }
-
       return appointment;
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
@@ -147,90 +168,146 @@ export class AppointmentsService {
 
   async update(
     appointmentId: string,
-    userId: string,
+    userId: string, // User performing the update
     userRole: Role,
     updateAppointmentDto: UpdateAppointmentDto,
   ): Promise<Appointment> {
+    const { notes, status, staffId: newStaffId, newAppointmentDate, newAppointmentTime } = updateAppointmentDto;
+
     try {
       const existingAppointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
+        include: { service: { select: { durationMinutes: true } } }, // Include service for duration
       });
 
       if (!existingAppointment) {
         throw new NotFoundException(`Appointment with ID "${appointmentId}" not found.`);
       }
+      if (!existingAppointment.service.durationMinutes) {
+        throw new BadRequestException("Cannot process update: existing appointment's service has no duration.");
+      }
 
-      // Basic Authorization: Only owner, admin, or staff can update.
-      // Owners can update notes, or potentially reschedule if allowed.
-      // Staff/Admin can update status, assign staff, and reschedule.
-        if (existingAppointment.ownerId !== userId && userRole !== Role.ADMIN && userRole !== Role.CLINIC_STAFF && userRole !== Role.GROOMER) {
-          throw new ForbiddenException('You do not have permission to update this appointment.');
-        }
 
-      // Prevent regular users from changing critical fields like ownerId, petId, serviceId, staffId, status (unless explicitly allowed)
+      if (
+        existingAppointment.ownerId !== userId &&
+        userRole !== Role.ADMIN &&
+        userRole !== Role.CLINIC_STAFF &&
+        userRole !== Role.GROOMER &&
+        existingAppointment.staffId !== userId // Allow assigned staff to modify (e.g. status)
+      ) {
+        throw new ForbiddenException('You do not have permission to update this appointment.');
+      }
+
+      const dataToUpdate: Prisma.AppointmentUpdateInput = {}; // Use Prisma.AppointmentUpdateInput for type safety
+
       if (userRole === Role.OWNER) {
-        const disallowedUpdates = ['petId', 'serviceId', 'staffId', 'status', 'newAppointmentDate', 'newAppointmentTime']; // If user can't reschedule
-        for (const field of disallowedUpdates) {
-          if (updateAppointmentDto.hasOwnProperty(field) && field !== 'notes') { // Allow notes update
-            throw new ForbiddenException(`Users are not allowed to update ${field}.`);
-          }
+        if (notes !== undefined) dataToUpdate.notes = notes;
+        if (status !== undefined) {
+          if (status === 'CANCELLED') dataToUpdate.status = status;
+          else throw new ForbiddenException('Owners can only update status to CANCELLED.');
         }
-        if (updateAppointmentDto.status && updateAppointmentDto.status !== 'CANCELLED') {
-             throw new ForbiddenException('Users can only change status to CANCELLED.');
+        // Disallow owners from changing other fields
+        const forbiddenFields = ['staffId', 'newAppointmentDate', 'newAppointmentTime', 'petId', 'serviceId'];
+        for (const field of forbiddenFields) {
+            if (updateAppointmentDto.hasOwnProperty(field)) {
+                 throw new ForbiddenException(`Owners are not allowed to update '${field}'.`);
+            }
         }
-        if (updateAppointmentDto.newAppointmentDate || updateAppointmentDto.newAppointmentTime) {
-            // If users are allowed to reschedule, you'd add more logic here.
-            // For now, disallow if not ADMIN/STAFF.
-            throw new ForbiddenException('Users cannot reschedule appointments. Please contact staff.');
+      } else { // ADMIN, CLINIC_STAFF, GROOMER
+        if (notes !== undefined) dataToUpdate.notes = notes;
+        if (status !== undefined) dataToUpdate.status = status;
+        if (newStaffId !== undefined) {
+          dataToUpdate.staff = { // Use the relation field name 'staff'
+            connect: { id: newStaffId } // Connect to the User record by its id
+          };
         }
       }
 
-      // Handle rescheduling logic
-      let updatedAppointmentDate: Date | undefined;
-      let updatedAppointmentTime: Date | undefined;
-      if (updateAppointmentDto.newAppointmentDate || updateAppointmentDto.newAppointmentTime) {
-        const datePart = updateAppointmentDto.newAppointmentDate || existingAppointment.appointmentDate.toISOString().split('T')[0];
-        const timePart = updateAppointmentDto.newAppointmentTime || existingAppointment.appointmentTime.toISOString().split('T')[1].substring(0, 5);
-        const newFullDateTime = new Date(`${datePart}T${timePart}:00Z`);
+      let finalStaffIdForCheck = newStaffId || existingAppointment.staffId;
 
-        updatedAppointmentDate = newFullDateTime;
-        updatedAppointmentTime = newFullDateTime;
+      if (newAppointmentDate || newAppointmentTime) {
+        if (userRole === Role.OWNER) {
+             throw new ForbiddenException('Owners cannot reschedule appointments. Please contact staff.');
+        }
+        const originalDateTime = existingAppointment.dateTime;
+        const datePart = newAppointmentDate || originalDateTime.toISOString().split('T')[0];
+        // Ensure newAppointmentTime is in HH:mm format if used
+        const timePart = newAppointmentTime || 
+                         `${originalDateTime.getUTCHours().toString().padStart(2, '0')}:${originalDateTime.getUTCMinutes().toString().padStart(2, '0')}`;
+        
+        const newProposedDateTime = new Date(`${datePart}T${timePart}:00.000Z`); // Ensure UTC
 
-        // Check for conflicts with the new time slot
-        const conflictCheck = await this.prisma.appointment.findUnique({
+        if (isNaN(newProposedDateTime.getTime())) {
+            throw new BadRequestException('Invalid new appointment date/time format.');
+        }
+        dataToUpdate.dateTime = newProposedDateTime;
+
+        // --- Refined Conflict Check for Reschedule ---
+        const serviceToUse = await this.prisma.service.findUnique({ 
+            where: { id: existingAppointment.serviceId } 
+        });
+        if (!serviceToUse || serviceToUse.durationMinutes === null) {
+            throw new BadRequestException("Service details are missing for conflict checking.");
+        }
+        const appointmentEndTime = new Date(newProposedDateTime.getTime() + serviceToUse.durationMinutes * 60000);
+
+        // Check staff availability for the new slot
+        const staffAvailability = await this.prisma.staffAvailability.findFirst({
             where: {
-                appointmentDate_appointmentTime_serviceId: {
-                    appointmentDate: updatedAppointmentDate,
-                    appointmentTime: updatedAppointmentTime,
-                    serviceId: existingAppointment.serviceId, // Check with the original service
-                },
+                staffId: finalStaffIdForCheck,
+                startTime: { lte: newProposedDateTime },
+                endTime: { gte: appointmentEndTime },
             },
         });
-
-        // Ensure the conflict is not with the appointment itself if only notes changed but time/date are same.
-        if (conflictCheck && conflictCheck.id !== appointmentId) {
-            throw new ConflictException('The requested new service slot is already booked.');
+        if (!staffAvailability) {
+            throw new ConflictException('Selected staff is not available for the new requested time slot.');
+        }
+        
+        // Check for other appointments for this staff that would overlap
+        const conflictingAppointments = await this.prisma.appointment.findMany({
+            where: {
+                id: { not: appointmentId }, // Exclude the current appointment
+                staffId: finalStaffIdForCheck,
+                status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+                dateTime: { 
+                    lt: appointmentEndTime, // An existing appt starts before the new one would end
+                },
+                // We need to calculate the endTime of each potential conflicting appointment
+                // This is complex in a single query. A simpler check based on unique constraint violation
+                // for the exact start time is an alternative, or iterate and check.
+                // For now, let's check if any appointment starts at this exact new time for this staff.
+                // The unique constraint will catch exact start time conflicts.
+                // A more robust overlap check would be:
+                // AND: [
+                //   { dateTime: { lt: appointmentEndTime } }, // existing.start < new.end
+                //   { 
+                //      // existing.end > new.start - requires calculating existing.end dynamically
+                //      // This is easier if you iterate or use a raw query for complex overlap logic
+                //   }
+                // ]
+            }
+        });
+        // This check will be refined. The unique constraint will catch exact start time conflicts.
+        if (conflictingAppointments.some(app => app.dateTime.getTime() === newProposedDateTime.getTime())) {
+             throw new ConflictException('The new time slot for this staff member is already booked or conflicts with another appointment.');
         }
       }
-
-      const dataToUpdate: any = {
-        notes: updateAppointmentDto.notes,
-        status: updateAppointmentDto.status,
-        staffId: updateAppointmentDto.staffId,
-        appointmentDate: updatedAppointmentDate,
-        appointmentTime: updatedAppointmentTime,
-      };
-
-      // Filter out undefined values to avoid updating fields unintentionally
-      Object.keys(dataToUpdate).forEach(key => dataToUpdate[key] === undefined && delete dataToUpdate[key]);
+      
+      if (Object.keys(dataToUpdate).length === 0) {
+        throw new BadRequestException('No valid fields provided for update.');
+      }
 
       return this.prisma.appointment.update({
         where: { id: appointmentId },
         data: dataToUpdate,
       });
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof ConflictException || error instanceof BadRequestException) {
+      if ( error instanceof NotFoundException || error instanceof ForbiddenException ||
+           error instanceof BadRequestException || error instanceof ConflictException ) {
         throw error;
+      }
+      if (error.code === 'P2002' && error.meta?.target?.includes('unique_staff_time_slot')) {
+        throw new ConflictException('The updated time slot with the selected staff is already booked (unique constraint).');
       }
       console.error(`Error updating appointment with ID ${appointmentId}:`, error);
       throw new InternalServerErrorException('Failed to update appointment.');
@@ -238,7 +315,13 @@ export class AppointmentsService {
   }
 
   async remove(appointmentId: string, userId: string, userRole: Role): Promise<void> {
-    try {
+    // ... (your existing remove method seems mostly fine, ensure it checks ownership/role correctly) ...
+    // Consider if a staff member assigned to an appointment can cancel/remove it.
+    // Your current check:
+    // if (appointment.ownerId !== userId && userRole !== Role.ADMIN && userRole !== Role.CLINIC_STAFF && userRole !== Role.GROOMER)
+    // This allows any staff to cancel any appointment if they have the generic role.
+    // You might want to refine it to: appointment.staffId === userId for staff.
+     try {
       const appointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
       });
@@ -247,32 +330,133 @@ export class AppointmentsService {
         throw new NotFoundException(`Appointment with ID "${appointmentId}" not found.`);
       }
 
-      // Authorization check: Only owner, admin, or assigned staff can delete/cancel
-      if (appointment.ownerId !== userId && userRole !== Role.ADMIN && userRole !== Role.CLINIC_STAFF && userRole !== Role.GROOMER) {
+      const isOwner = appointment.ownerId === userId;
+      const isAdmin = userRole === Role.ADMIN;
+      const isAssignedStaff = appointment.staffId === userId;
+      const isAnyClinicStaffOrGroomer = userRole === Role.CLINIC_STAFF || userRole === Role.GROOMER;
+
+
+      if (!isOwner && !isAdmin && !isAssignedStaff && !isAnyClinicStaffOrGroomer /* if any staff can cancel */) {
         throw new ForbiddenException('You do not have permission to cancel this appointment.');
       }
-
-      // Optional: Prevent deletion if appointment is already completed or in a certain status
-      // if (appointment.status === 'COMPLETED') {
-      //   throw new BadRequestException('Cannot cancel a completed appointment.');
-      // }
-
-      // Instead of hard delete, you might want to update status to 'CANCELLED'
+      
+      // Instead of hard delete, update status to 'CANCELLED'
       await this.prisma.appointment.update({
         where: { id: appointmentId },
-        data: { status: 'CANCELLED' }, // Recommended: Change status to CANCELLED instead of hard delete
+        data: { status: 'CANCELLED' },
       });
-
-      // If you truly want to hard delete:
-      // await this.prisma.appointment.delete({
-      //   where: { id: appointmentId },
-      // });
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
         throw error;
       }
-      console.error(`Error deleting appointment with ID ${appointmentId}:`, error);
+      console.error(`Error cancelling appointment with ID ${appointmentId}:`, error);
       throw new InternalServerErrorException('Failed to cancel appointment.');
     }
+  }
+
+  async findAvailableSlots(
+    queryDto: { serviceId: string; date: string; staffId?: string; },
+  ): Promise<Array<{ startTime: string; endTime: string; staffId: string; staffName: string }>> {
+    const { serviceId, date, staffId: requestedStaffId } = queryDto;
+
+    const requestedDateOnly = new Date(date + 'T00:00:00.000Z'); // Ensure date is treated as start of day UTC
+    if (isNaN(requestedDateOnly.getTime())) {
+      throw new BadRequestException('Invalid date format. Please use YYYY-MM-DD.');
+    }
+
+    const service = await this.prisma.service.findUnique({ where: { id: serviceId } });
+    if (!service || !service.isActive || service.durationMinutes === null) {
+      throw new NotFoundException(`Active service with ID "${serviceId}" not found or duration not set.`);
+    }
+    const serviceDuration = service.durationMinutes;
+
+    let staffToCheck: Array<Pick<PrismaUser, 'id' | 'firstName' | 'lastName'>> = [];
+
+    if (requestedStaffId) {
+      const staffMember = await this.prisma.user.findUnique({
+        where: { id: requestedStaffId },
+        select: { id: true, firstName: true, lastName: true, role: true },
+      });
+      if (!staffMember || (staffMember.role !== Role.CLINIC_STAFF && staffMember.role !== Role.GROOMER)) {
+        throw new NotFoundException(`Staff member with ID "${requestedStaffId}" not found or is not valid staff.`);
+      }
+      const canPerform = await this.prisma.staffService.findUnique({
+        where: { staffId_serviceId: { staffId: requestedStaffId, serviceId } },
+      });
+      if (!canPerform) {
+        throw new BadRequestException(`Staff member ${staffMember.firstName} is not qualified for service ${service.name}.`);
+      }
+      staffToCheck.push({ id: staffMember.id, firstName: staffMember.firstName, lastName: staffMember.lastName });
+    } else {
+      const qualifiedStaffRecords = await this.prisma.staffService.findMany({
+        where: { serviceId },
+        include: { staff: { select: { id: true, firstName: true, lastName: true, role: true } } },
+      });
+      staffToCheck = qualifiedStaffRecords
+        .map(qs => qs.staff)
+        .filter(staff => staff.role === Role.CLINIC_STAFF || staff.role === Role.GROOMER)
+        .map(staff => ({id: staff.id, firstName: staff.firstName, lastName: staff.lastName }));
+    }
+
+    if (staffToCheck.length === 0) return [];
+
+    const allAvailableSlots: Array<{ startTime: string; endTime: string; staffId: string; staffName: string }> = [];
+    const dayStart = new Date(Date.UTC(requestedDateOnly.getUTCFullYear(), requestedDateOnly.getUTCMonth(), requestedDateOnly.getUTCDate(), 0, 0, 0, 0));
+    const dayEnd = new Date(Date.UTC(requestedDateOnly.getUTCFullYear(), requestedDateOnly.getUTCMonth(), requestedDateOnly.getUTCDate(), 23, 59, 59, 999));
+
+    for (const staff of staffToCheck) {
+      const staffAvailabilityBlocks = await this.prisma.staffAvailability.findMany({
+        where: { staffId: staff.id, startTime: { lt: dayEnd }, endTime: { gt: dayStart } },
+        orderBy: { startTime: 'asc' },
+      });
+
+      const existingAppointments = await this.prisma.appointment.findMany({
+        where: {
+          staffId: staff.id,
+          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+          dateTime: { gte: dayStart, lt: dayEnd },
+        },
+        include: { service: { select: { durationMinutes: true } } },
+        orderBy: { dateTime: 'asc' },
+      });
+
+      const bookedTimeRanges = existingAppointments.map(app => {
+        if (app.service.durationMinutes === null) return null;
+        return { start: app.dateTime, end: new Date(app.dateTime.getTime() + app.service.durationMinutes * 60000) };
+      }).filter(slot => slot !== null) as Array<{ start: Date; end: Date }>;
+
+      for (const block of staffAvailabilityBlocks) {
+        let currentTimePointer = new Date(Math.max(block.startTime.getTime(), dayStart.getTime())); // Start from block start or day start
+
+        while (currentTimePointer < block.endTime && currentTimePointer < dayEnd) {
+          const slotStartTime = new Date(currentTimePointer);
+          const slotEndTime = new Date(slotStartTime.getTime() + serviceDuration * 60000);
+
+          if (slotEndTime > block.endTime || slotEndTime > dayEnd) break; // Slot exceeds availability block or day end
+
+          let isConflict = false;
+          for (const booked of bookedTimeRanges) {
+            if (slotStartTime < booked.end && slotEndTime > booked.start) { // Check for overlap
+              isConflict = true;
+              break;
+            }
+          }
+
+          if (!isConflict) {
+            allAvailableSlots.push({
+              startTime: slotStartTime.toISOString(),
+              endTime: slotEndTime.toISOString(),
+              staffId: staff.id,
+              staffName: `${staff.firstName} ${staff.lastName}`,
+            });
+          }
+          // Advance pointer by a fixed interval (e.g., 15 mins) or by serviceDuration
+          // Advancing by a fixed interval is often better for finding all possible start times
+          currentTimePointer = new Date(currentTimePointer.getTime() + (15 * 60000)); // e.g., advance by 15 minutes
+        }
+      }
+    }
+    allAvailableSlots.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    return allAvailableSlots;
   }
 }

@@ -1,26 +1,24 @@
 // backend/src/appointments/dto/create-appointment.dto.ts
 import { IsString, IsNotEmpty, IsDateString, IsOptional, IsUUID } from 'class-validator';
-import { Type } from 'class-transformer';
 
 export class CreateAppointmentDto {
   @IsUUID()
   @IsNotEmpty()
-  petId!: string; // The ID of the pet for whom the appointment is booked
+  petId!: string;
 
   @IsUUID()
   @IsNotEmpty()
-  serviceId!: string; // The ID of the service being booked
+  serviceId!: string;
 
-  @IsDateString() // Validates string as a date (e.g., "YYYY-MM-DD")
+  @IsDateString() // Validates if the string is an ISO8601 date string.
   @IsNotEmpty()
-  appointmentDate!: string; // Date of the appointment (e.g., "2025-06-15")
+  dateTime!: string; // e.g., "2025-07-15T14:30:00.000Z" (UTC is recommended)
 
-  @IsString() // Validates string as a time (e.g., "HH:MM")
-  @IsNotEmpty()
-  // This will be parsed and stored as a Time type in Prisma
-  appointmentTime!: string; // Time of the appointment (e.g., "14:30")
+  @IsUUID()
+  @IsNotEmpty() // For now, let's make staffId mandatory for simplicity. Can be made optional later.
+  staffId!: string; // The ID of the staff member (vet/groomer)
 
   @IsString()
   @IsOptional()
-  notes?: string; // Any specific notes for the appointment
+  notes?: string;
 }

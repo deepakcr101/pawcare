@@ -1,38 +1,48 @@
 // backend/src/pets/dto/create-pet.dto.ts
-import { IsString, IsNotEmpty, IsDateString, IsOptional, IsEnum, IsJSON } from 'class-validator';
-import { PetGender, PetSpecies } from '@prisma/client'; // Assuming you might have enums
+import {
+  IsString,
+  IsNotEmpty,
+  IsDateString,
+  IsOptional,
+  IsJSON,
+  IsEnum,
+  IsUrl,
+} from 'class-validator';
+import { PetSpecies, PetGender } from '@prisma/client'; // Assumes these are now in your Prisma schema
 
 export class CreatePetDto {
   @IsString()
-  @IsNotEmpty()
-  name: string;
+  @IsNotEmpty({ message: 'Pet name cannot be empty.' })
+  name!: string;
 
-  @IsEnum(PetSpecies)
-  @IsNotEmpty()
-  species: PetSpecies;
+  @IsEnum(PetSpecies, { message: 'Invalid pet species.' })
+  @IsNotEmpty({ message: 'Pet species cannot be empty.' })
+  species!: PetSpecies;
 
   @IsString()
   @IsOptional()
   breed?: string;
 
-  @IsEnum(PetGender)
-  @IsOptional()
+  @IsEnum(PetGender, { message: 'Invalid pet gender.' })
+  @IsOptional() // Gender can be optional
   gender?: PetGender;
 
-  @IsDateString() // Ensures it's a date string like YYYY-MM-DD
-  dateOfBirth: string;
+  @IsDateString(
+    {},
+    { message: 'Date of birth must be a valid ISO8601 date string (e.g., YYYY-MM-DD).' },
+  )
+  @IsNotEmpty({ message: 'Date of birth cannot be empty.' })
+  dateOfBirth!: string; // Will be converted to DateTime in service
 
-  @IsString()
+  @IsJSON({ message: 'Medical history must be a valid JSON string.' })
+  @IsOptional()
+  medicalHistory?: string; // e.g., '{"allergies": ["pollen"], "conditions": ["arthritis"]}'
+
+  @IsJSON({ message: 'Vaccination history must be a valid JSON string.' })
+  @IsOptional()
+  vaccinationHistory?: string; // e.g., '{"rabies": "2023-05-10", "distemper": "2023-06-15"}'
+
+  @IsUrl({}, { message: 'Avatar URL must be a valid URL.' })
   @IsOptional()
   avatarUrl?: string;
-
-  @IsJSON() // If medicalHistory is expected as a JSON string
-  @IsOptional()
-  medicalHistory?: string; // Or any, if you parse later in service
-
-  @IsJSON() // If vaccinationHistory is expected as a JSON string
-  @IsOptional()
-  vaccinationHistory?: string; // Or any
-
-  // Note: NO ownerId field here.
 }

@@ -10,6 +10,80 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// --- ENUMS ---
+enum DaycareBookingStatus { // Status for a single pet's daycare booking
+  BOOKED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+}
+
+enum DaycareSessionStatus { // Status for the overall daily daycare session
+  AVAILABLE
+  FULL
+  CLOSED
+}
+
+enum ActivityType {
+  FEEDING
+  WALKING
+  MEDICATION
+  GROOMING
+  VET_CHECK
+  PLAYTIME
+  POTTY_BREAK
+  NOTE
+  OTHER
+}
+// Define the Role Enum
+enum Role {
+  OWNER
+  ADMIN
+  CLINIC_STAFF
+  GROOMER
+}
+// Define the AppointmentStatus Enum
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED // <--- Added
+  COMPLETED
+  CANCELLED
+  RESCHEDULED // <--- Keep this one!
+  NO_SHOW   // <--- Added
+}
+// Service Model (e.g., Vet Consultation, Grooming, Daycare
+enum ServiceType {
+  VETERINARY
+  GROOMING
+  DAYCARE
+  // Add other service types as needed
+}
+// Define the OrderStatus Enum
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED // Added a refunded status
+}
+
+enum PetSpecies {
+  DOG
+  CAT
+  BIRD
+  REPTILE
+  FISH
+  RODENT
+  OTHER
+}
+
+enum PetGender {
+  MALE
+  FEMALE
+  UNKNOWN
+}
+
 // --- Data Models ---
 
 model User {
@@ -38,23 +112,6 @@ model User {
   @@map("users") // Map the model name "User" to table name "users" in the database
 }
 
-// Define the Role Enum
-enum Role {
-  OWNER
-  ADMIN
-  CLINIC_STAFF
-  GROOMER
-}
-
-// Add other models here as we define them...
-
-// Service Model (e.g., Vet Consultation, Grooming, Daycare
-enum ServiceType {
-  VETERINARY
-  GROOMING
-  DAYCARE
-  // Add other service types as needed
-}
 // Your existing Service model (ensure it has @unique on name and the correct references)
 model Service {
   id              String         @id @default(uuid()) @map("service_id")
@@ -73,41 +130,29 @@ model Service {
   @@map("services")
 }
 
-// Define the AppointmentStatus Enum
-enum AppointmentStatus {
-  SCHEDULED
-  CONFIRMED // <--- Added
-  COMPLETED
-  CANCELLED
-  RESCHEDULED // <--- Keep this one!
-  NO_SHOW   // <--- Added
-}
-
-
-// Your existing Pet model (ensure it connects to User)
 model Pet {
-  id               String        @id @default(uuid()) @map("pet_id")
-  name             String
-  species          String
-  breed            String?
-  dateOfBirth      DateTime
-  medicalHistory   Json?
-  vaccinationHistory Json?
-  avatarUrl        String?
-  ownerId          String // Foreign key to User
-  owner            User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  appointments     Appointment[] // Appointments associated with this pet
-  activityLogs     ActivityLog[] @relation("PetActivityLogs") // Activity logs related to this pet
-  daycareBookings DaycareBooking[] @relation("PetDaycareBookings") 
-  
-  aiConsultations  AIConsultation[] @relation("PetAIConsultations") 
+  id                 String      @id @default(uuid()) @map("pet_id")
+  name               String
+  species            PetSpecies  // Changed from String
+  breed              String?
+  gender             PetGender?  // Added new field (optional)
+  dateOfBirth        DateTime    @map("date_of_birth") // Ensure this field exists and map if needed
+  medicalHistory     Json?       @map("medical_history")
+  vaccinationHistory Json?       @map("vaccination_history")
+  avatarUrl          String?     @map("avatar_url")
+  ownerId            String      @map("owner_id")
+  owner              User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  appointments       Appointment[]
+  activityLogs       ActivityLog[] @relation("PetActivityLogs")
+  daycareBookings    DaycareBooking[] @relation("PetDaycareBookings")
+  aiConsultations    AIConsultation[] @relation("PetAIConsultations")
+
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
 
   @@map("pets")
 }
-
 
 model Appointment {
   id        String   @id @default(uuid())
@@ -196,16 +241,6 @@ model Order {
   @@map("orders") // Map to 'orders' table
 }
 
-// Define the OrderStatus Enum
-enum OrderStatus {
-  PENDING
-  PROCESSING
-  SHIPPED
-  DELIVERED
-  CANCELLED
-  REFUNDED // Added a refunded status
-}
-
 // Order Item Model (line items for an order)
 model OrderItem {
   id            String    @id @default(uuid()) @map("order_item_id")
@@ -225,35 +260,6 @@ model OrderItem {
   @@map("order_items") // Map to 'order_items' table
 }
 
-/// --- ENUMS ---
-enum DaycareBookingStatus { // Status for a single pet's daycare booking
-  BOOKED
-  CHECKED_IN
-  CHECKED_OUT
-  CANCELLED
-}
-
-enum DaycareSessionStatus { // Status for the overall daily daycare session
-  AVAILABLE
-  FULL
-  CLOSED
-}
-
-enum ActivityType {
-  FEEDING
-  WALKING
-  MEDICATION
-  GROOMING
-  VET_CHECK
-  PLAYTIME
-  POTTY_BREAK
-  NOTE
-  OTHER
-}
-
-// --- MODELS ---
-
-// New Model: Represents the overall availability for a specific date (e.g., "July 1st: 10 spots")
 model DaycareSession {
   id              String               @id @default(uuid()) @map("daycare_session_id")
   date            DateTime             @unique @db.Date // Ensures only one session per day
