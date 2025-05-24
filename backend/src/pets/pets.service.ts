@@ -1,5 +1,5 @@
 // backend/src/pets/pets.service.ts
-import { Injectable, InternalServerErrorException,NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException,NotFoundException,ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service'; // Import PrismaService
 import { CreatePetDto } from './dto/create-pet.dto';
 import { UpdatePetDto } from './dto/update-pet.dto';
@@ -37,6 +37,15 @@ export class PetsService {
     }
   }
   
+  async findAll(): Promise<Pet[]> {
+    try {
+      return this.prisma.pet.findMany();
+    } catch (error) {
+      console.error('Error fetching all pets:', error);
+      throw new InternalServerErrorException('Failed to fetch all pets.');
+    }
+  }
+
   async findAllByOwner(ownerId: string): Promise<Pet[]> {
     try {
       return this.prisma.pet.findMany({
@@ -48,22 +57,18 @@ export class PetsService {
     }
   }
 
-  async findOne(petId: string, ownerId: string): Promise<Pet> {
+  async findOne(petId: string): Promise<Pet> { // Removed ownerId from parameters
     try {
       const pet = await this.prisma.pet.findUnique({
-        where: {
-          id: petId,
-          ownerId: ownerId, // Ensure the pet belongs to the authenticated owner
-        },
+        where: { id: petId }, // Only filter by petId
       });
 
       if (!pet) {
-        throw new NotFoundException(`Pet with ID "${petId}" not found for this owner.`);
+        throw new NotFoundException(`Pet with ID "${petId}" not found.`);
       }
 
       return pet;
     } catch (error) {
-      // Re-throw NotFoundException, otherwise log and throw generic error
       if (error instanceof NotFoundException) {
         throw error;
       }
@@ -73,22 +78,11 @@ export class PetsService {
   }
 
   async update(petId: string, ownerId: string, updatePetDto: UpdatePetDto): Promise<Pet> {
-    // First, ensure the pet exists and belongs to the authenticated owner
-    const existingPet = await this.prisma.pet.findUnique({
-      where: {
-        id: petId,
-        ownerId: ownerId,
-      },
-    });
-
-    if (!existingPet) {
-      throw new NotFoundException(`Pet with ID "${petId}" not found for this owner.`);
-    }
-
+    // Controller already ensures the user has permission (e.g., is owner of this pet)
+    // or is an admin/staff. If owner, the ownerId parameter will be passed.
     try {
       const { dateOfBirth, medicalHistory, vaccinationHistory, ...rest } = updatePetDto;
 
-      // Prepare data for update: parse date and JSON strings if provided
       const dataToUpdate: any = { ...rest };
 
       if (dateOfBirth !== undefined) {
@@ -101,13 +95,29 @@ export class PetsService {
         dataToUpdate.vaccinationHistory = vaccinationHistory ? JSON.parse(vaccinationHistory) : null;
       }
 
+      // Check if pet exists and belongs to the owner before updating
+      // This step can be optional here if you trust the controller's robust checks.
+      // However, for sensitive operations like update/delete, it's safer to keep
+      // an explicit ownership check in the service if an ownerId is provided.
+      const existingPet = await this.prisma.pet.findUnique({
+        where: { id: petId },
+      });
+      if (!existingPet) {
+          throw new NotFoundException(`Pet with ID "${petId}" not found.`);
+      }
+      // This is crucial: if an ownerId is provided (meaning an OWNER is performing the action),
+      // we must ensure they own the pet. Admin/Staff won't pass an ownerId here.
+      if (ownerId && existingPet.ownerId !== ownerId) {
+          throw new ForbiddenException('You do not have permission to update this pet.');
+      }
+
+
       return this.prisma.pet.update({
         where: { id: petId },
         data: dataToUpdate,
       });
     } catch (error) {
-      // Re-throw NotFoundException, otherwise log and throw generic error
-      if (error instanceof NotFoundException) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
       }
       console.error(`Error updating pet with ID ${petId}:`, error);
@@ -116,32 +126,31 @@ export class PetsService {
   }
 
   async remove(petId: string, ownerId: string): Promise<void> {
-    // First, ensure the pet exists and belongs to the authenticated owner
-    const existingPet = await this.prisma.pet.findUnique({
-      where: {
-        id: petId,
-        ownerId: ownerId,
-      },
-    });
-
-    if (!existingPet) {
-      throw new NotFoundException(`Pet with ID "${petId}" not found for this owner.`);
-    }
-
+    // Controller handles the role check. If an OWNER is doing this, ownerId will be passed.
     try {
-      await this.prisma.pet.delete({
-        where: { id: petId },
-      });
-    } catch (error) {
-      // Re-throw NotFoundException, otherwise log and throw generic error
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      console.error(`Error deleting pet with ID ${petId}:`, error);
-      throw new InternalServerErrorException('Failed to delete pet.');
-    }
-   }
+        const existingPet = await this.prisma.pet.findUnique({
+            where: { id: petId },
+        });
 
+        if (!existingPet) {
+            throw new NotFoundException(`Pet with ID "${petId}" not found.`);
+        }
+        // Similar to update: if an ownerId is provided, ensure ownership
+        if (ownerId && existingPet.ownerId !== ownerId) {
+            throw new ForbiddenException('You do not have permission to delete this pet.');
+        }
+
+        await this.prisma.pet.delete({
+            where: { id: petId },
+        });
+    } catch (error) {
+        if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+            throw error;
+        }
+        console.error(`Error deleting pet with ID ${petId}:`, error);
+        throw new InternalServerErrorException('Failed to delete pet.');
+    }
+  }
   // We'll add other CRUD methods (findAll, findOne, update, remove) here next
   // async findAll(ownerId: string): Promise<Pet[]> { ... }
   // async findOne(id: string): Promise<Pet | null> { ... }

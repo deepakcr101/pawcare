@@ -1,95 +1,146 @@
 // frontend/src/context/AuthContext.tsx
-import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
-import { loginUser, registerUser } from '../api/auth'; // Re-use our auth API calls
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'; // Added useCallback
+import type { ReactNode } from 'react';
+import apiClient from '../api';
+// Make sure these types are defined in frontend/src/types/auth.ts
+import type { User, LoginCredentials, RegisterCredentials } from '../types/auth'; 
 
-// Define the User interface based on your backend's user response
-interface User {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  role: string; // e.g., 'OWNER', 'ADMIN', 'CLINIC_STAFF', 'GROOMER'
-}
-
-// Define the shape of our authentication context
 interface AuthContextType {
   user: User | null;
-  accessToken: string | null;
-  login: (email: string, password: string) => Promise<void>;
-  register: (userData: any) => Promise<void>;
+  isAuthenticated: boolean;
+  login: (credentials: LoginCredentials) => Promise<void>;
+  register: (credentials: RegisterCredentials) => Promise<void>;
   logout: () => void;
-  isLoading: boolean; // To indicate if initial loading (checking local storage) is happening
+  loading: boolean; // Indicates if the initial auth state is being loaded
+  apiClient: typeof apiClient;
 }
 
-// Create the context with a default undefined value (will be provided by provider)
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// AuthProvider component to wrap our application
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true); // Initial loading state
+  const [loading, setLoading] = useState(true); // Start as true, as we're loading user from localStorage
 
-  // On component mount, try to load user from localStorage
+  // This useEffect runs once on mount to load user from local storage
   useEffect(() => {
-    const storedToken = localStorage.getItem('accessToken');
-    const storedUser = localStorage.getItem('user');
-
-    if (storedToken && storedUser) {
+    const loadUserFromLocalStorage = () => {
       try {
-        const parsedUser: User = JSON.parse(storedUser);
-        setUser(parsedUser);
-        setAccessToken(storedToken);
+        const storedUser = localStorage.getItem('user');
+        const storedAccessToken = localStorage.getItem('accessToken');
+
+        // --- IMPORTANT: Robust check for valid data ---
+        if (storedUser && storedUser !== "undefined" && storedUser !== "null" && storedAccessToken) {
+          const parsedUser: User = JSON.parse(storedUser);
+          setUser(parsedUser);
+          apiClient.defaults.headers.common['Authorization'] = `Bearer ${storedAccessToken}`;
+        } else {
+          // If no valid user or token, ensure local storage is clean
+          localStorage.removeItem('user');
+          localStorage.removeItem('accessToken');
+          setUser(null);
+        }
       } catch (error) {
-        console.error("Failed to parse stored user data:", error);
-        // Clear invalid data
-        localStorage.removeItem('accessToken');
+        console.error('Failed to parse stored user data:', error);
+        // On error, clear storage to prevent infinite issues and set user to null
         localStorage.removeItem('user');
+        localStorage.removeItem('accessToken');
+        setUser(null);
+      } finally {
+        setLoading(false); // Authentication loading is complete
       }
+    };
+
+    loadUserFromLocalStorage();
+  }, []); // Empty dependency array means it runs only once on component mount
+
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    setLoading(true);
+    try {
+      // --- CAPTURE THE RESPONSE HERE ---
+      const response = await apiClient.post<{ user: User; accessToken: string }>('/auth/login', credentials);
+
+      // --- ADD THE SUCCESS LOGIC HERE ---
+      const { user, accessToken } = response.data;
+      localStorage.setItem('accessToken', accessToken);
+      localStorage.setItem('user', JSON.stringify(user)); // Store user data
+      setUser(user); // Update user state in context
+      apiClient.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`; // Set Authorization header for future requests
+
+    } catch (error: any) {
+      console.error('Login failed:', error);
+
+      let errorMessage = 'An unexpected error occurred. Please try again.';
+
+      if (error.response && error.response.data && error.response.data.message) {
+        if (Array.isArray(error.response.data.message)) {
+          errorMessage = error.response.data.message.join(', ');
+        } else {
+          errorMessage = error.response.data.message;
+        }
+      } else if (error.message === 'Network Error') {
+          errorMessage = 'Network Error: Could not connect to the server.';
+      } else {
+          errorMessage = error.message; // Catch generic JS errors too
+      }
+
+      // Important: On login failure, ensure no stale data remains
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('user');
+      setUser(null); // Clear user state
+      throw new Error(errorMessage); // Re-throw the refined error
+    } finally {
+      setLoading(false);
     }
-    setIsLoading(false); // Finished initial loading
-  }, []); // Run only once on mount
+  }, [setUser]); 
 
-  const handleLogin = async (email: string, password: string) => {
-    const response = await loginUser({ email, password });
-    localStorage.setItem('accessToken', response.accessToken);
-    localStorage.setItem('user', JSON.stringify(response.user));
-    setUser(response.user);
-    setAccessToken(response.accessToken);
-  };
+  const register = useCallback(async (credentials: RegisterCredentials) => {
+    setLoading(true); // Indicate loading during registration
+    try {
+      // Assuming register endpoint also returns user and token for auto-login
+      const response = await apiClient.post<{ user: User; accessToken: string }>('/auth/register', credentials);
+      const { user, accessToken } = response.data;
+      localStorage.setItem('accessToken', accessToken);
+      localStorage.setItem('user', JSON.stringify(user));
+      setUser(user);
+    } catch (error) {
+      console.error('Registration failed:', error);
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('user');
+      setUser(null);
+      throw error;
+    } finally {
+      setLoading(false); // Registration attempt finished
+    }
+  }, []);
 
-  const handleRegister = async (userData: any) => {
-    const response = await registerUser(userData);
-    // For registration, we typically don't log in immediately,
-    // but you could add a login here if that's your UX.
-    // For now, we'll just return the response to the caller.
-    return response; // Caller handles redirection/success message
-  };
-
-  const handleLogout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('user');
     setUser(null);
-    setAccessToken(null);
-  };
+    // No need to set loading here, as user is immediately null and UI should react
+  }, []);
 
-  const contextValue: AuthContextType = {
-    user,
-    accessToken,
-    login: handleLogin,
-    register: handleRegister,
-    logout: handleLogout,
-    isLoading,
-  };
+  const isAuthenticated = !!user;
 
   return (
-    <AuthContext.Provider value={contextValue}>
+    <AuthContext.Provider value={{
+      user,
+      isAuthenticated,
+      login,
+      register,
+      logout,
+      loading,
+      apiClient // <--- ADD THIS LINE
+    }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-// Custom hook to easily consume the AuthContext
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
