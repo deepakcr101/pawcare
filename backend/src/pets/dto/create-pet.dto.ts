@@ -1,32 +1,38 @@
-import { IsString, IsNotEmpty, IsDateString, IsOptional, IsJSON } from 'class-validator';
+// backend/src/pets/dto/create-pet.dto.ts
+import { IsString, IsNotEmpty, IsDateString, IsOptional, IsEnum, IsJSON } from 'class-validator';
+import { PetGender, PetSpecies } from '@prisma/client'; // Assuming you might have enums
 
 export class CreatePetDto {
   @IsString()
   @IsNotEmpty()
-  name!: string;
+  name: string;
 
-  @IsString()
+  @IsEnum(PetSpecies)
   @IsNotEmpty()
-  species!: string;
+  species: PetSpecies;
 
   @IsString()
   @IsOptional()
   breed?: string;
 
-  @IsDateString()
-  @IsNotEmpty()
-  dateOfBirth!: string; // Using string for easy input via DTO, convert to Date in service
-
+  @IsEnum(PetGender)
   @IsOptional()
-  @IsJSON() // Validate as JSON string
-  medicalHistory?: string; // Will store as JSONB in DB, received as string
+  gender?: PetGender;
 
-  @IsOptional()
-  @IsJSON() // Validate as JSON string
-  vaccinationHistory?: string; // Will store as JSONB in DB, received as string
+  @IsDateString() // Ensures it's a date string like YYYY-MM-DD
+  dateOfBirth: string;
 
   @IsString()
   @IsOptional()
   avatarUrl?: string;
-}
 
+  @IsJSON() // If medicalHistory is expected as a JSON string
+  @IsOptional()
+  medicalHistory?: string; // Or any, if you parse later in service
+
+  @IsJSON() // If vaccinationHistory is expected as a JSON string
+  @IsOptional()
+  vaccinationHistory?: string; // Or any
+
+  // Note: NO ownerId field here.
+}

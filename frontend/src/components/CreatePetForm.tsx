@@ -41,37 +41,62 @@ const handleSubmit = async (e: React.FormEvent) => {
     setErrorMessage(null);
 
     // Prepare data for backend
-    const dataToSend: any = { ...formData };
+    // Make sure all properties here match your CreatePetDto in the backend
+    // (name, species, dateOfBirth, breed?, medicalHistory?, vaccinationHistory?, avatarUrl?)
+    const dataToSend: CreatePetFormData = { // Use your defined interface for type safety
+        name: formData.name,
+        species: formData.species,
+        dateOfBirth: formData.dateOfBirth,
+        // Optional fields - only include them if they have values or if your DTO handles undefined/null
+        ...(formData.breed && { breed: formData.breed }),
+        ...(formData.avatarUrl && { avatarUrl: formData.avatarUrl }),
+        // Ensure medicalHistory and vaccinationHistory are valid JSON strings if provided
+        // or handle their parsing/stringification more robustly if they are complex objects in the form state.
+    };
 
-    // ✅ Inject the logged-in user ID
-    dataToSend.ownerId = user?.id;  // <-- ADD THIS LINE
-    // ✅ Inject the logged-in user ID
-    dataToSend.ownerId = user?.id || user?.userId || user?.sub;  // Use the correct property for user ID
-    if (dataToSend.medicalHistory) {
+    // Conditionally add medicalHistory if it exists and is potentially a JSON string
+    if (formData.medicalHistory) {
+        let medicalHistoryString = formData.medicalHistory;
         try {
-            JSON.parse(dataToSend.medicalHistory);
+            // Check if it's already a valid JSON string. If not, attempt to wrap it.
+            JSON.parse(medicalHistoryString);
         } catch (e) {
-            dataToSend.medicalHistory = JSON.stringify({ notes: dataToSend.medicalHistory });
+            // If parsing fails and it's just plain text, you might want to structure it.
+            // This example assumes if it's not JSON, it's a note.
+            // Or, ensure your input method for medicalHistory produces a JSON string directly.
+            medicalHistoryString = JSON.stringify({ notes: formData.medicalHistory });
         }
+        (dataToSend as any).medicalHistory = medicalHistoryString; // Add it to dataToSend
     }
-    if (dataToSend.vaccinationHistory) {
+
+
+    // Conditionally add vaccinationHistory
+    if (formData.vaccinationHistory) {
+        let vaccinationHistoryString = formData.vaccinationHistory;
         try {
-            JSON.parse(dataToSend.vaccinationHistory);
+            JSON.parse(vaccinationHistoryString);
         } catch (e) {
-            dataToSend.vaccinationHistory = JSON.stringify({ notes: dataToSend.vaccinationHistory });
+            vaccinationHistoryString = JSON.stringify({ notes: formData.vaccinationHistory });
         }
+        (dataToSend as any).vaccinationHistory = vaccinationHistoryString; // Add it to dataToSend
     }
+
+
+    // DO NOT ADD ownerId to dataToSend
+    // const ownerId = user?.userId; // Or user?.id, user?.sub - whatever your AuthContext provides as the user's ID
+    // The backend will get the ownerId from the JWT token.
 
     try {
-      const response = await apiClient.post<Pet>('/pets', dataToSend);
+      console.log("Payload being sent to /pets:", dataToSend); // For debugging the exact payload
+      const response = await apiClient.post<Pet>('/pets', dataToSend); // Send dataToSend WITHOUT ownerId
       setSuccessMessage(`Pet "${response.data.name}" added successfully!`);
       setFormData({ name: '', species: '', dateOfBirth: '' }); // Clear form
     } catch (error: any) {
       console.error('Failed to add pet:', error);
       if (error.response && error.response.data && error.response.data.message) {
-        setErrorMessage(Array.isArray(error.response.data.message)
-          ? error.response.data.message.join(', ')
-          : error.response.data.message);
+        const message = error.response.data.message;
+        // Handle cases where 'message' might be an array of validation errors
+        setErrorMessage(Array.isArray(message) ? message.join(', ') : message);
       } else {
         setErrorMessage('Failed to add pet. Please try again.');
       }
@@ -79,7 +104,6 @@ const handleSubmit = async (e: React.FormEvent) => {
       setLoading(false);
     }
 };
-
 
   return (
     <div className="max-w-xl mx-auto p-6 bg-white rounded-lg shadow-md mt-8">

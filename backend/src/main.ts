@@ -1,25 +1,26 @@
 // backend/src/main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common'; // Import ValidationPipe
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // Strips away properties not defined in the DTO
+      forbidNonWhitelisted: true, // Throws an error if non-whitelisted properties are present
+      transform: true, // Automatically transforms payload to DTO instance
+      // transformOptions: { enableImplicitConversion: true }, // if you want string params to be converted to numbers/booleans
+    }),
+  );
+
   app.enableCors({
-    origin: 'http://localhost:5173', // Replace with your frontend's actual URL
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true, // Allow cookies to be sent
+    origin: 'http://localhost:5173', // Your frontend URL
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
   });
 
-  // Apply global validation pipe
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true, // Automatically strip properties that do not have any decorators
-    forbidNonWhitelisted: true, // Throw an error if non-whitelisted properties are present
-    transform: true, // Automatically transform payloads to DTO instances
-  }));
-
-  await app.listen(3000); // Ensure your backend listens on port 3000
+  await app.listen(3000);
 }
 bootstrap();
