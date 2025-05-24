@@ -32,6 +32,8 @@ model User {
   orders        Order[]
   activityLogs        ActivityLog[] @relation("StaffActivityLogs") // Activity logs created by this user (staff)
   aiConsultations AIConsultation[]
+  staffCapableOfService     StaffService[]      @relation("StaffCapableOfService")
+  staffAvailabilitySchedule StaffAvailability[] @relation("StaffAvailabilitySchedule")
 
   @@map("users") // Map the model name "User" to table name "users" in the database
 }
@@ -66,7 +68,8 @@ model Service {
   updatedAt       DateTime       @updatedAt @map("updated_at")
 
   appointments    Appointment[] // Appointments related to this service
-
+  servicePerformedByStaff StaffService[] @relation("ServicePerformedByStaff")
+  
   @@map("services")
 }
 
@@ -107,37 +110,35 @@ model Pet {
 
 
 model Appointment {
-  id              String            @id @default(uuid())
-  appointmentDate DateTime          @db.Date
-  appointmentTime DateTime          @db.Time(0)
-  status          AppointmentStatus @default(SCHEDULED)
-  notes           String?
+  id        String   @id @default(uuid())
+  dateTime  DateTime // REPLACES appointmentDate and appointmentTime
+  status    AppointmentStatus @default(SCHEDULED)
+  notes     String?
 
-  // Relation to the User (owner) who booked it
-  ownerId         String
-  owner           User              @relation("OwnerAppointments", fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   String
+  owner     User     @relation("OwnerAppointments", fields: [ownerId], references: [id], onDelete: Cascade)
 
-  // Relation to the Pet attending
-  petId           String
-  pet             Pet               @relation(fields: [petId], references: [id], onDelete: Cascade)
+  petId     String
+  pet       Pet      @relation(fields: [petId], references: [id], onDelete: Cascade)
 
-  // Relation to the Service being booked
-  serviceId       String
-  service         Service           @relation(fields: [serviceId], references: [id]) // Corrected: references to Service.id
+  serviceId String
+  service   Service  @relation(fields: [serviceId], references: [id])
 
-  // Optional relation to the User (staff) assigned to it
-  staffId         String? // Nullable if staff assignment is optional
-  staff           User?             @relation("StaffAppointments", fields: [staffId], references: [id]) // Use staffAppointments relation name
+  staffId   String   // Consider making this non-nullable if an appointment must have staff.
+                     // If staff can be assigned later, it can remain nullable, but booking logic gets complex.
+  staff     User     @relation("StaffAppointments", fields: [staffId], references: [id]) // Assuming staffId will be non-null for a confirmed appointment
 
-  // Back-relation from ActivityLog
-  activityLogs    ActivityLog[]     @relation("AppointmentActivityLogs") // <--- ADDED THIS LINE to Appointment model
+  activityLogs ActivityLog[] @relation("AppointmentActivityLogs")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([appointmentDate, appointmentTime, serviceId]) // One service slot per date/time
-  // If a staff member can only do one appointment at a time, add:
-  // @@unique([appointmentDate, appointmentTime, staffId])
+  // Ensure a staff member is not double-booked.
+  // If staffId can be null initially, this constraint only applies when staffId is set.
+  // Or, if a service is a unique resource (e.g. one operating room), you might need a different constraint.
+  @@unique([dateTime, staffId], name: "unique_staff_time_slot")
+  // Remove the old unique constraint:
+  // @@unique([appointmentDate, appointmentTime, serviceId]) 
   @@map("appointments")
 }
 
@@ -359,4 +360,33 @@ model AIConsultation {
   @@index([petId])
   @@index([ownerId])
   @@map("ai_consultations") // Map to 'ai_consultations' table
+}
+
+model StaffService {
+  staffId   String   @map("staff_id")
+  staff     User     @relation("StaffCapableOfService", fields: [staffId], references: [id], onDelete: Cascade)
+  serviceId String   @map("service_id")
+  service   Service  @relation("ServicePerformedByStaff", fields: [serviceId], references: [id], onDelete: Cascade)
+
+  assignedAt DateTime @default(now()) @map("assigned_at") // Optional: when this qualification was made
+
+  @@id([staffId, serviceId])
+  @@map("staff_services")
+}
+
+model StaffAvailability {
+  id        String   @id @default(uuid()) @map("staff_availability_id")
+  staffId   String   @map("staff_id")
+  staff     User     @relation("StaffAvailabilitySchedule", fields: [staffId], references: [id], onDelete: Cascade)
+  startTime DateTime // Start of an available block
+  endTime   DateTime // End of an available block
+  // Example for recurring:
+  // recurringRule String? // Could store an iCalendar RRule (e.g., "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0")
+  // isRecurring Boolean @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([staffId, startTime, endTime]) // Important for querying availability
+  @@map("staff_availabilities")
 }
