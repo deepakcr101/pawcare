@@ -217,9 +217,7 @@ export class AppointmentsService {
         if (notes !== undefined) dataToUpdate.notes = notes;
         if (status !== undefined) dataToUpdate.status = status;
         if (newStaffId !== undefined) {
-          dataToUpdate.staff = { // Use the relation field name 'staff'
-            connect: { id: newStaffId } // Connect to the User record by its id
-          };
+          dataToUpdate.staff = { connect: { id: newStaffId } };
         }
       }
 
