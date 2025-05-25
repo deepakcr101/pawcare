@@ -186,6 +186,18 @@ export class StaffService {
       throw new InternalServerErrorException('Failed to update staff member.');
     }
   }
+  
+  async findStaffByService(serviceId: string): Promise<StaffProfile[]> {
+  const staffServices = await this.prisma.staffService.findMany({
+    where: { serviceId: serviceId },
+    include: {
+      staff: { // Select the staff details you want to return
+        select: { id: true, firstName: true, lastName: true, role: true /* add other needed fields */ },
+      },
+    },
+  });
+  return staffServices.map(ss => ss.staff).filter(staff => staff !== null) as StaffProfile[]; // Ensure staff is not null
+}
 
   async removeStaff(id: string): Promise<void> {
     try {

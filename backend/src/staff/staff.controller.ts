@@ -53,4 +53,11 @@ export class StaffController {
   async remove(@Param('id') id: string): Promise<void> {
     return this.staffService.removeStaff(id);
   }
+
+  @Get('service/:serviceId')
+@Roles(Role.OWNER, Role.ADMIN, Role.CLINIC_STAFF, Role.GROOMER) // Or just authenticated users
+async findStaffForService(@Param('serviceId') serviceId: string): Promise<StaffProfile[]> {
+  return this.staffService.findStaffByService(serviceId);
+}
+
 }
