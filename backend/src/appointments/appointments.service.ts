@@ -166,7 +166,7 @@ export class AppointmentsService {
     }
   }
 
-  async update(
+ async update(
     appointmentId: string,
     userId: string, // User performing the update
     userRole: Role,

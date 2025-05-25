@@ -80,5 +80,8 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
-  }
+  },
+  
+  "seed": "ts-node prisma/seed.ts"
+
 }

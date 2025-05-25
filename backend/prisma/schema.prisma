@@ -109,7 +109,7 @@ model User {
   staffCapableOfService     StaffService[]      @relation("StaffCapableOfService")
   staffAvailabilitySchedule StaffAvailability[] @relation("StaffAvailabilitySchedule")
 
-  @@map("users") // Map the model name "User" to table name "users" in the database
+  @@map("users") // Map the model name "User" to table name "users" in the database                    
 }
 
 // Your existing Service model (ensure it has @unique on name and the correct references)
